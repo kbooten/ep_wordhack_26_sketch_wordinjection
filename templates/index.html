@@ -1,0 +1,432 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Park Walk</title>
+  <style>
+    :root {
+      --divider: rgba(0, 0, 0, 0.09);
+      --story-size: clamp(22px, 2.15vw, 38px);
+      --word-size: clamp(29px, 2.9vw, 49px);
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #fff;
+      color: #000;
+      font-family: Arial, Helvetica, sans-serif;
+    }
+
+    #screen {
+      display: grid;
+      grid-template-columns: minmax(0, 68fr) minmax(300px, 32fr);
+      width: 100vw;
+      height: 100vh;
+    }
+
+    #story {
+      overflow-y: auto;
+      padding: clamp(34px, 5vw, 82px);
+      padding-right: clamp(28px, 4vw, 64px);
+      scrollbar-width: none;
+      scroll-behavior: smooth;
+    }
+
+    #story::-webkit-scrollbar { display: none; }
+
+    .line {
+      max-width: 40ch;
+      margin: 0 0 0.72em;
+      font-size: var(--story-size);
+      line-height: 1.23;
+      font-weight: 400;
+      letter-spacing: -0.018em;
+    }
+
+    #word-pool {
+      position: relative;
+      overflow: hidden;
+      min-width: 0;
+      border-left: 1px solid var(--divider);
+    }
+
+    .word {
+      --repeat-scale: 1;
+      position: absolute;
+      display: block;
+      max-width: 82%;
+      font-size: calc(var(--word-size) * var(--repeat-scale));
+      line-height: 0.92;
+      font-weight: 750;
+      letter-spacing: -0.04em;
+      text-align: center;
+      overflow-wrap: anywhere;
+      will-change: opacity, transform;
+      transform: translate(-50%, -50%);
+      transform-origin: center;
+      user-select: none;
+      pointer-events: none;
+    }
+
+    #ear {
+      position: fixed;
+      z-index: 20;
+      top: 18px;
+      right: 30px;
+      display: none;
+      place-items: center;
+      width: auto;
+      height: auto;
+      padding: 0;
+      background: transparent;
+      font-size: 68px;
+      line-height: 1;
+      user-select: none;
+      pointer-events: none;
+    }
+
+    #ear span {
+      display: block;
+      filter: grayscale(1) sepia(1) saturate(7) hue-rotate(63deg) brightness(0.92);
+      transform: rotate(-5deg);
+    }
+
+    #message {
+      position: fixed;
+      z-index: 30;
+      left: 50%;
+      bottom: 18px;
+      max-width: min(640px, 90vw);
+      transform: translateX(-50%);
+      padding: 8px 12px;
+      background: rgba(255,255,255,0.94);
+      font-size: 14px;
+      opacity: 0;
+      transition: opacity 180ms ease;
+      pointer-events: none;
+    }
+
+    #message.visible { opacity: 1; }
+
+    @media (max-width: 760px) {
+      #screen { grid-template-columns: 56fr 44fr; }
+      #story { padding: 30px 22px; }
+      #ear { right: 14px; font-size: 60px; }
+    }
+  </style>
+</head>
+<body>
+  <main id="screen">
+    <section id="story" aria-live="polite"></section>
+    <aside id="word-pool" aria-label="Living spoken words"></aside>
+  </main>
+
+  <div id="ear" aria-hidden="true"><span>👂</span></div>
+  <div id="message" role="status"></div>
+
+  <script>
+    const GENERATION_INTERVAL_MS = {{ (generation_interval * 1000) | int }};
+    const DEFAULT_WORD_LIFETIME = {{ word_lifetime | tojson }};
+
+    const storyEl = document.getElementById("story");
+    const poolEl = document.getElementById("word-pool");
+    const earEl = document.getElementById("ear");
+    const messageEl = document.getElementById("message");
+
+    let wordLifetime = DEFAULT_WORD_LIFETIME;
+    let serverClockOffset = 0;
+    let liveWords = [];
+    let renderedStoryLength = 0;
+    let generating = false;
+    let polling = false;
+
+    let mediaStream = null;
+    let mediaRecorder = null;
+    let chunks = [];
+    let spaceIsDown = false;
+    let messageTimer = null;
+
+    function showMessage(text, duration = 3000) {
+      messageEl.textContent = text;
+      messageEl.classList.add("visible");
+      clearTimeout(messageTimer);
+      messageTimer = setTimeout(() => messageEl.classList.remove("visible"), duration);
+    }
+
+    function hash32(text) {
+      let hash = 2166136261;
+      for (let i = 0; i < text.length; i++) {
+        hash ^= text.charCodeAt(i);
+        hash = Math.imul(hash, 16777619);
+      }
+      return hash >>> 0;
+    }
+
+    function unitHash(text, salt) {
+      let value = hash32(`${text}:${salt}`);
+      value ^= value >>> 16;
+      value = Math.imul(value, 0x7feb352d);
+      value ^= value >>> 15;
+      value = Math.imul(value, 0x846ca68b);
+      value ^= value >>> 16;
+      return (value >>> 0) / 4294967295;
+    }
+
+    function colorFor(text) {
+      const hue = hash32(text) % 360;
+      return `hsl(${hue} 94% 43%)`;
+    }
+
+    function placeWord(el, id) {
+      // Keep centers away from the edges so even enlarged repeated words remain visible.
+      const x = 17 + unitHash(id, 1) * 66;
+      const y = 12 + unitHash(id, 2) * 78;
+      const rotation = -5 + unitHash(id, 3) * 10;
+      el.style.left = `${x}%`;
+      el.style.top = `${y}%`;
+      el.dataset.rotation = rotation.toFixed(2);
+    }
+
+
+    // Audio is transcribed exactly once, after Space is released. Nothing is
+    // rendered from partial browser speech-recognition guesses, so words cannot
+    // appear twice or flash in incomplete form.
+
+    function syncWords(words, serverNow) {
+      serverClockOffset = (Date.now() / 1000) - serverNow;
+      const existing = new Map(
+        Array.from(poolEl.querySelectorAll(".word"))
+          .map(el => [el.dataset.id, el])
+      );
+      const nextIds = new Set();
+      const livingCounts = new Map();
+
+      for (const item of words) {
+        livingCounts.set(item.word, (livingCounts.get(item.word) || 0) + 1);
+      }
+
+      for (const item of words) {
+        nextIds.add(item.id);
+        let el = existing.get(item.id);
+        if (!el) {
+          el = document.createElement("span");
+          el.className = "word";
+          el.dataset.id = item.id;
+          el.dataset.word = item.word;
+          el.textContent = item.word;
+          el.style.color = colorFor(item.word);
+          placeWord(el, item.id);
+          poolEl.appendChild(el);
+        }
+
+        const count = livingCounts.get(item.word) || 1;
+        const repeatScale = 1 + Math.min(1.05, Math.log2(count) * 0.27);
+        el.style.setProperty("--repeat-scale", repeatScale.toFixed(3));
+        el.style.zIndex = String(10 + Math.min(90, count * 3));
+      }
+
+      for (const [id, el] of existing) {
+        if (!nextIds.has(id)) el.remove();
+      }
+
+      liveWords = words;
+    }
+
+    function renderStory(lines) {
+      if (lines.length < renderedStoryLength) {
+        storyEl.replaceChildren();
+        renderedStoryLength = 0;
+      }
+
+      for (let i = renderedStoryLength; i < lines.length; i++) {
+        const line = document.createElement("div");
+        line.className = "line";
+        line.textContent = lines[i];
+        storyEl.appendChild(line);
+      }
+
+      if (lines.length !== renderedStoryLength) {
+        renderedStoryLength = lines.length;
+        requestAnimationFrame(() => {
+          storyEl.scrollTop = storyEl.scrollHeight;
+        });
+      }
+    }
+
+    async function refreshState() {
+      if (polling) return;
+      polling = true;
+      try {
+        const response = await fetch("/api/state", { cache: "no-store" });
+        if (!response.ok) throw new Error(`State request failed (${response.status})`);
+        const state = await response.json();
+        wordLifetime = state.word_lifetime_seconds || DEFAULT_WORD_LIFETIME;
+        syncWords(state.words || [], state.now);
+        renderStory(state.story || []);
+      } catch (error) {
+        console.error(error);
+      } finally {
+        polling = false;
+      }
+    }
+
+    function animateFades() {
+      const localNow = Date.now() / 1000;
+      const estimatedServerNow = localNow - serverClockOffset;
+      const byId = new Map(liveWords.map(item => [item.id, item]));
+
+      for (const el of poolEl.children) {
+        const item = byId.get(el.dataset.id);
+        if (!item) continue;
+        const age = Math.max(0, estimatedServerNow - item.added_at);
+        const remaining = Math.max(0, wordLifetime - age);
+        const progress = remaining / wordLifetime;
+        const rotation = Number(el.dataset.rotation || 0);
+        const ageScale = 0.88 + progress * 0.12;
+        el.style.opacity = String(Math.pow(progress, 0.82));
+        el.style.transform = `translate(-50%, -50%) rotate(${rotation}deg) scale(${ageScale})`;
+      }
+
+      requestAnimationFrame(animateFades);
+    }
+
+    async function generateLine() {
+      if (generating) return;
+      generating = true;
+      try {
+        const response = await fetch("/api/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{}"
+        });
+        if (response.status === 409) return;
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Generation failed");
+        await refreshState();
+      } catch (error) {
+        console.error(error);
+        showMessage(error.message || "Generation failed");
+      } finally {
+        generating = false;
+      }
+    }
+
+    function bestMimeType() {
+      const choices = [
+        "audio/webm;codecs=opus",
+        "audio/webm",
+        "audio/mp4",
+        "audio/ogg;codecs=opus"
+      ];
+      return choices.find(type => MediaRecorder.isTypeSupported(type)) || "";
+    }
+
+    async function ensureMicrophone() {
+      if (mediaStream && mediaStream.active) return mediaStream;
+      mediaStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      });
+      return mediaStream;
+    }
+
+    async function startRecording() {
+      if (mediaRecorder && mediaRecorder.state === "recording") return;
+      try {
+        const stream = await ensureMicrophone();
+        if (!spaceIsDown) return;
+
+        chunks = [];
+        const mimeType = bestMimeType();
+        mediaRecorder = mimeType
+          ? new MediaRecorder(stream, { mimeType })
+          : new MediaRecorder(stream);
+
+        mediaRecorder.addEventListener("dataavailable", event => {
+          if (event.data && event.data.size > 0) chunks.push(event.data);
+        });
+
+        mediaRecorder.addEventListener("stop", uploadRecording, { once: true });
+        mediaRecorder.start();
+      } catch (error) {
+        console.error(error);
+        spaceIsDown = false;
+        earEl.style.display = "none";
+        showMessage("Microphone access failed; allow microphone permission and try again.", 5000);
+      }
+    }
+
+    function stopRecording() {
+      if (mediaRecorder && mediaRecorder.state === "recording") {
+        mediaRecorder.stop();
+      }
+    }
+
+    async function uploadRecording() {
+      const type = mediaRecorder?.mimeType || chunks[0]?.type || "audio/webm";
+      const blob = new Blob(chunks, { type });
+      chunks = [];
+      if (blob.size < 600) return;
+
+      const extension = type.includes("mp4") ? "m4a" : type.includes("ogg") ? "ogg" : "webm";
+      const form = new FormData();
+      form.append("audio", blob, `speech.${extension}`);
+
+      try {
+        const response = await fetch("/api/transcribe", {
+          method: "POST",
+          body: form
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Transcription failed");
+        // Whisper is the only transcription pass. Render its authoritative
+        // words immediately when the upload returns.
+        await refreshState();
+      } catch (error) {
+        console.error(error);
+        showMessage(error.message || "Transcription failed", 5000);
+      }
+    }
+
+    document.addEventListener("keydown", event => {
+      if (event.code !== "Space" || event.repeat) return;
+      if (["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName)) return;
+      event.preventDefault();
+      spaceIsDown = true;
+      earEl.style.display = "grid";
+      startRecording();
+    });
+
+    document.addEventListener("keyup", event => {
+      if (event.code !== "Space") return;
+      event.preventDefault();
+      spaceIsDown = false;
+      earEl.style.display = "none";
+      stopRecording();
+    });
+
+    window.addEventListener("blur", () => {
+      if (!spaceIsDown) return;
+      spaceIsDown = false;
+      earEl.style.display = "none";
+      stopRecording();
+    });
+
+    refreshState().then(() => {
+      if (renderedStoryLength === 0) generateLine();
+    });
+    setInterval(refreshState, 2000);
+    setInterval(generateLine, GENERATION_INTERVAL_MS);
+    requestAnimationFrame(animateFades);
+  </script>
+</body>
+</html>
