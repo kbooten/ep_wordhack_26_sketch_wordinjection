@@ -736,20 +736,19 @@ BASE FORM OF THE WALK:
 - Never repeat any earlier sentence verbatim, even when the same required words recur; continue from the last line with a genuinely new perception, action, thought, or consequence.
 
 THE WORD-COMBINATION GAME:
-- When required words are present, use ALL OF THEM in the same sentence, exactly as supplied.
+- When required words (or short phrases or chunks) are present, use ALL OF THEM in the same sentence, exactly as supplied.
 - The selected words arrive in intact spoken chunks: do not omit part of a chunk. A short spoken burst of up to four words has been deliberately kept together; longer bursts were randomly divided into chunks of at most four before selection.
 - You are judged first on complete exact-word coverage and then on how cleverly you make apparently incompatible words belong to one perceptible scene, action, mental state, or chain of events.
 - The required words are raw language to be USED; they are not names of characters, labels, magical tokens, or topics for discussion.
-- NEVER coordinate the words into a list and make that list act: no “smile and humongous meet,” no “pickle, simon, and crimp gather,” no “the words arrive.”
 - Silently decide an ordinary grammatical role and a concrete bearer for each word before writing. Do not output that plan.
 - Adjectives must modify something we can identify; verbs must actually happen; nouns must name an object, being, substance, body part, place, feeling, thought-content, or other intelligible referent; adverbs must modify an action or quality.
 - Ask silently: WHO smiles? WHAT is humongous? WHAT contains the money? WHO performs the verb? The sentence must answer those questions through its images and actions.
-- For “smile” plus “humongous,” valid structures include a humongous smile on a child beneath the elm, a humongous animal smiling at us, or one clause in which someone smiles and another in which something concrete is humongous; “smile and humongous meet” is invalid because neither word has been used according to its meaning.
 - Do not mention, quote, list, read, write down, define, discuss, or generically “think about” the required words.
 - A thought must be the actual content of thought in the moment—an image, fear, memory, calculation, wish, or decision—not a report that we considered a vocabulary item.
 - Embed every word inside natural syntax, with articles, prepositions, auxiliaries, possessives, and subordinate clauses as needed; the reader should be able to picture or feel what happened without ever thinking about a word game.
 - Let the words alter what is seen and felt and, when their pressure is strong, change our route, bodies, companions, weather, scale, causality, or understanding of the park.
 - When realism cannot contain the combination, use controlled poetic association: one concrete image transforms into the next, syntax may stretch, and the park may become impossible, but every required word must still perform a clear grammatical and perceptual function.
+- This sentence can get weird and it can get long, but EVERY SINGLE WORD (or chunk) SUPPLIED MUST BE USED.  You fail if you don't use all of them.  If there are a lot, just make a really long rambling sentence that uses them all.
 - {rare_flourish_rule}
 
 CONTINUITY AND CALM:
